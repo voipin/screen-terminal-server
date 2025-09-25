@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screen Terminal Web Interface</title>
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #4CAF50;
+            margin-bottom: 30px;
+        }
+        .sessions-section {
+            background-color: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .sessions-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .sessions-header h2 {
+            margin: 0;
+            color: #4CAF50;
+        }
+        .create-session {
+            display: flex;
+            gap: 10px;
+        }
+        .create-session input {
+            padding: 8px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        .create-session button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .create-session button:hover {
+            background-color: #45a049;
+        }
+        .sessions-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+        .session-card {
+            background-color: #3d3d3d;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #555;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .session-card:hover {
+            background-color: #4d4d4d;
+        }
+        .session-card h3 {
+            margin: 0 0 10px 0;
+            color: #4CAF50;
+        }
+        .session-card p {
+            margin: 5px 0;
+            color: #cccccc;
+        }
+        .terminal-section {
+            background-color: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .terminal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .terminal-header h2 {
+            margin: 0;
+            color: #4CAF50;
+        }
+        .close-terminal {
+            padding: 8px 16px;
+            background-color: #f44336;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .close-terminal:hover {
+            background-color: #da190b;
+        }
+        #terminal {
+            width: 100%;
+            height: calc(100vh - 200px);
+            min-height: 400px;
+            background-color: #000;
+            border-radius: 4px;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #cccccc;
+        }
+        .error {
+            background-color: #f44336;
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .success {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Screen Terminal Web Interface</h1>
+        
+        <div class="sessions-section">
+            <div class="sessions-header">
+                <h2>Screen Sessions</h2>
+                <div class="create-session">
+                    <input type="text" id="sessionName" placeholder="Enter session name">
+                    <button onclick="createSession()">Create Session</button>
+                </div>
+            </div>
+            <div id="sessionsList" class="sessions-list">
+                <div class="loading">Loading sessions...</div>
+            </div>
+        </div>
+
+        <div id="terminalSection" class="terminal-section">
+            <div class="terminal-header">
+                <h2>Terminal: <span id="currentSession"></span></h2>
+                <button class="close-terminal" onclick="closeTerminal()">Close Terminal</button>
+            </div>
+            <div id="terminal"></div>
+        </div>
+    </div>
+
+    <script>
+        let terminal;
+        let socket;
+        let fitAddon;
+        let webLinksAddon;
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            loadSessions();
+            setInterval(loadSessions, 5000); // Refresh every 5 seconds
+        });
+
+        // Load screen sessions
+        async function loadSessions() {
+            try {
+                const apiUrl = window.location.origin + '/api/sessions';
+                const response = await fetch(apiUrl);
+                const sessions = await response.json();
+                displaySessions(sessions);
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+                document.getElementById('sessionsList').innerHTML =
+                    '<div class="error">Error loading sessions: ' + error.message + '</div>';
+            }
+        }
+
+        // Display sessions in the UI
+        function displaySessions(sessions) {
+            const container = document.getElementById('sessionsList');
+
+            if (sessions.length === 0) {
+                container.innerHTML = '<div class="loading">No screen sessions found. Create one to get started.</div>';
+                return;
+            }
+
+            container.innerHTML = sessions.map(session => `
+                <div class="session-card" onclick="connectToSession('${session.pid}.${session.name}')">
+                    <h3>${session.pid}.${session.name}</h3>
+                    <p><strong>Status:</strong> ${session.status}</p>
+                </div>
+            `).join('');
+        }
+
+        // Create a new screen session
+        async function createSession() {
+            const nameInput = document.getElementById('sessionName');
+            const name = nameInput.value.trim();
+            
+            if (!name) {
+                alert('Please enter a session name');
+                return;
+            }
+
+            try {
+                const apiUrl = window.location.origin + '/api/sessions';
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ name })
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showMessage('Session created successfully', 'success');
+                    nameInput.value = '';
+                    loadSessions();
+                } else {
+                    showMessage(result.error || 'Error creating session', 'error');
+                }
+            } catch (error) {
+                console.error('Error creating session:', error);
+                showMessage('Error creating session', 'error');
+            }
+        }
+
+        // Connect to a screen session
+        function connectToSession(sessionName) {
+            document.getElementById('currentSession').textContent = sessionName;
+            document.getElementById('terminalSection').style.display = 'block';
+            
+            initializeTerminal();
+            connectWebSocket(sessionName);
+        }
+
+        // Initialize xterm.js terminal
+        function initializeTerminal() {
+            if (terminal) {
+                terminal.dispose();
+            }
+
+            terminal = new Terminal({
+                cursorBlink: true,
+                fontSize: 14,
+                fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
+                theme: {
+                    background: '#000000',
+                    foreground: '#ffffff'
+                }
+            });
+
+            fitAddon = new FitAddon.FitAddon();
+            webLinksAddon = new WebLinksAddon.WebLinksAddon();
+            
+            terminal.loadAddon(fitAddon);
+            terminal.loadAddon(webLinksAddon);
+
+            const terminalElement = document.getElementById('terminal');
+            terminalElement.innerHTML = '';
+            terminal.open(terminalElement);
+            
+            fitAddon.fit();
+            
+            // Handle terminal resize
+            const handleResize = () => {
+                fitAddon.fit();
+                sendTerminalResize();
+            };
+
+            // Listen for window resize
+            window.addEventListener('resize', handleResize);
+
+            // Also listen for terminal container resize using ResizeObserver
+            if (window.ResizeObserver) {
+                const resizeObserver = new ResizeObserver(() => {
+                    handleResize();
+                });
+                resizeObserver.observe(terminalElement);
+            }
+
+            // Initial resize
+            setTimeout(handleResize, 100);
+
+            // Handle terminal input
+            terminal.onData(data => {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: 'input', data }));
+                }
+            });
+        }
+
+        // Send terminal resize to server
+        function sendTerminalResize() {
+            if (socket && socket.readyState === WebSocket.OPEN && terminal) {
+                const { cols, rows } = terminal;
+                socket.send(JSON.stringify({ 
+                    type: 'resize', 
+                    cols, 
+                    rows 
+                }));
+            }
+        }
+
+        // Connect to WebSocket for terminal communication
+        function connectWebSocket(sessionName) {
+            if (socket) {
+                socket.close();
+            }
+
+            // Determine WebSocket URL based on current location
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            let wsUrl;
+            
+            // Special handling for ngrok domains
+            const currentHost = window.location.hostname;
+            
+            if (currentHost === 'wondrous-radically-bluebird.ngrok-free.app') {
+                // Use the separate WebSocket ngrok tunnel
+                wsUrl = `wss://279058511481.ngrok.app?session=${encodeURIComponent(sessionName)}`;
+            } else if (currentHost.includes('ngrok') || currentHost !== 'localhost') {
+                // For other custom domains and ngrok, use the same domain but with wss protocol
+                wsUrl = `${protocol}//${currentHost}?session=${encodeURIComponent(sessionName)}`;
+            } else {
+                // Local development
+                const host = window.location.host;
+                wsUrl = `${protocol}//${host.replace(':3000', ':3001')}?session=${encodeURIComponent(sessionName)}`;
+            }
+            
+            console.log('Connecting to WebSocket:', wsUrl);
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = () => {
+                console.log('WebSocket connected');
+                // Send initial terminal size
+                setTimeout(sendTerminalResize, 100);
+            };
+
+            socket.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    
+                    switch (message.type) {
+                        case 'output':
+                            terminal.write(message.data);
+                            break;
+                        case 'error':
+                            terminal.write(`\x1b[31m${message.data}\x1b[0m\r\n`);
+                            break;
+                        case 'exit':
+                            terminal.write(`\r\n\x1b[33mSession exited with code: ${message.code}\x1b[0m\r\n`);
+                            break;
+                        case 'connected':
+                            console.log(`Connected to session: ${message.session}`);
+                            break;
+                    }
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+
+            socket.onclose = () => {
+                console.log('WebSocket disconnected');
+                terminal.write('\r\n\x1b[31mConnection closed\x1b[0m\r\n');
+            };
+
+            socket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                terminal.write('\r\n\x1b[31mConnection error\x1b[0m\r\n');
+            };
+        }
+
+        // Close terminal and return to session list
+        function closeTerminal() {
+            if (socket) {
+                // Send detach command before closing
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: 'detach' }));
+                    setTimeout(() => {
+                        socket.close();
+                    }, 500);
+                } else {
+                    socket.close();
+                }
+            }
+            if (terminal) {
+                terminal.dispose();
+            }
+            document.getElementById('terminalSection').style.display = 'none';
+        }
+
+        // Show message to user
+        function showMessage(message, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = type;
+            messageDiv.textContent = message;
+            
+            const container = document.querySelector('.container');
+            container.insertBefore(messageDiv, container.firstChild);
+            
+            setTimeout(() => {
+                messageDiv.remove();
+            }, 3000);
+        }
+
+        // Handle Enter key in session name input
+        document.getElementById('sessionName').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                createSession();
+            }
+        });
+    </script>
+</body>
+</html>
